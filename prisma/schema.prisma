@@ -1,0 +1,736 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================
+// ENUMS
+// ============================================================
+
+enum UserRole {
+  SUPER_ADMIN
+  BUSINESS_OWNER
+  MANAGER
+  EMPLOYEE
+}
+
+enum PartyStatus {
+  REQUEST
+  ACTIVE
+  GUEST
+  BOOKING_BLOCK
+  REJECTED
+  CANCELLED
+  COMPLETE
+}
+
+enum PaymentType {
+  CARD
+  CASH
+  APPLE_PAY
+  CASH_APP
+  SQUARE_OTHER
+}
+
+enum PaymentStatus {
+  PAID
+  REFUND
+  TIP
+  PENDING
+}
+
+enum CouponType {
+  PERCENTAGE
+  FIXED_AMOUNT
+  PACKAGE
+  FULL_AMOUNT
+}
+
+enum EventType {
+  BIRTHDAY
+  FIELD_TRIP
+  CORPORATE
+  CUSTOM
+}
+
+enum InvitationMethod {
+  EMAIL
+  SMS
+  BOTH
+}
+
+enum WaiverStatus {
+  PENDING
+  SIGNED
+  EXPIRED
+}
+
+enum RefundType {
+  PERCENTAGE
+  FIXED_AMOUNT
+}
+
+// ============================================================
+// AUTH & USERS
+// ============================================================
+
+model User {
+  id            String   @id @default(cuid())
+  email         String   @unique
+  passwordHash  String   @map("password_hash")
+  firstName     String   @map("first_name")
+  lastName      String   @map("last_name")
+  phone         String?
+  role          UserRole @default(EMPLOYEE)
+  isActive      Boolean  @default(true) @map("is_active")
+  lastLoginAt   DateTime? @map("last_login_at")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  businessMembers  BusinessMember[]
+  partyNotes       PartyNote[]
+  partyAssignments PartyAssignment[]
+
+  @@map("users")
+}
+
+// ============================================================
+// BUSINESS & LOCATIONS
+// ============================================================
+
+model Business {
+  id          String   @id @default(cuid())
+  name        String
+  prefix      String   @unique
+  email       String?
+  phone       String?
+  logoUrl     String?  @map("logo_url")
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  locations   BusinessLocation[]
+  members     BusinessMember[]
+
+  @@map("businesses")
+}
+
+model BusinessLocation {
+  id                 String   @id @default(cuid())
+  businessId         String   @map("business_id")
+  name               String
+  prefix             String   @unique
+  address            String?
+  city               String?
+  state              String?
+  zipCode            String?  @map("zip_code")
+  country            String?  @default("US")
+  phone              String?
+  email              String?
+  timezone           String   @default("America/New_York")
+  currency           String   @default("USD")
+  isActive           Boolean  @default(true) @map("is_active")
+
+  // Payment gateway config (encrypted in practice)
+  stripeSecretKey    String?  @map("stripe_secret_key")
+  stripePublicKey    String?  @map("stripe_public_key")
+  squareAccessToken  String?  @map("square_access_token")
+  squareLocationId   String?  @map("square_location_id")
+  squareAppId        String?  @map("square_app_id")
+  squareEnvironment  String?  @default("sandbox") @map("square_environment")
+  paymentMethod      String   @default("stripe") @map("payment_method")
+
+  // Booking page customization
+  bookingPageTitle   String?  @map("booking_page_title")
+  bookingPageDesc    String?  @map("booking_page_desc")
+  refundPolicy       String?  @db.Text @map("refund_policy")
+
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  business           Business          @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  workHours          WorkHours[]
+  offDays            OffDay[]
+  rooms              Room[]
+  packages           Package[]
+  parties            Party[]
+  coupons            Coupon[]
+  addons             Addon[]
+  taxes              Tax[]
+  partyTypes         PartyType[]
+  emailTemplates     EmailTemplate[]
+  waiverTemplates    WaiverTemplate[]
+  teamAssignments    BusinessMember[]
+  notifications      NotificationEmail[]
+  socialLinks        SocialLink[]
+  gallery            GalleryImage[]
+
+  @@map("business_locations")
+}
+
+model BusinessMember {
+  id           String   @id @default(cuid())
+  businessId   String   @map("business_id")
+  locationId   String   @map("location_id")
+  userId       String   @map("user_id")
+  role         UserRole @default(EMPLOYEE)
+  isActive     Boolean  @default(true) @map("is_active")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  business     Business         @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  location     BusinessLocation @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  user         User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, locationId])
+  @@map("business_members")
+}
+
+model WorkHours {
+  id          String   @id @default(cuid())
+  locationId  String   @map("location_id")
+  dayOfWeek   Int      @map("day_of_week") // 0=Sunday, 6=Saturday
+  openTime    String   @map("open_time")   // "09:00"
+  closeTime   String   @map("close_time")  // "21:00"
+  isClosed    Boolean  @default(false) @map("is_closed")
+
+  location    BusinessLocation @relation(fields: [locationId], references: [id], onDelete: Cascade)
+
+  @@unique([locationId, dayOfWeek])
+  @@map("work_hours")
+}
+
+model OffDay {
+  id          String   @id @default(cuid())
+  locationId  String   @map("location_id")
+  date        DateTime @db.Date
+  reason      String?
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  location    BusinessLocation @relation(fields: [locationId], references: [id], onDelete: Cascade)
+
+  @@unique([locationId, date])
+  @@map("off_days")
+}
+
+// ============================================================
+// ROOMS, PACKAGES, ADDONS
+// ============================================================
+
+model Room {
+  id           String   @id @default(cuid())
+  locationId   String   @map("location_id")
+  name         String
+  description  String?
+  capacity     Int?
+  sortOrder    Int      @default(0) @map("sort_order")
+  isActive     Boolean  @default(true) @map("is_active")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  location     BusinessLocation @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  files        RoomFile[]
+  packageRooms PackageRoom[]
+  parties      Party[]
+
+  @@map("rooms")
+}
+
+model RoomFile {
+  id       String @id @default(cuid())
+  roomId   String @map("room_id")
+  fileUrl  String @map("file_url")
+  fileType String @default("image") @map("file_type")
+
+  room     Room   @relation(fields: [roomId], references: [id], onDelete: Cascade)
+
+  @@map("room_files")
+}
+
+model Package {
+  id                   String    @id @default(cuid())
+  locationId           String    @map("location_id")
+  name                 String
+  description          String?
+  contents             String?   @db.Text // e.g. "2 pizzas, 10 credits, drinks"
+  price                Decimal   @db.Decimal(10, 2)
+  cost                 Decimal?  @db.Decimal(10, 2)
+  extraPerPersonPrice  Decimal?  @db.Decimal(10, 2) @map("extra_per_person_price")
+  duration             Int       // minutes
+  bufferTime           Int       @default(0) @map("buffer_time") // minutes
+  minGuests            Int?      @map("min_guests")
+  maxGuests            Int?      @map("max_guests")
+  color                String?
+  eventType            EventType @default(BIRTHDAY) @map("event_type")
+  sortOrder            Int       @default(0) @map("sort_order")
+  isActive             Boolean   @default(true) @map("is_active")
+  createdAt            DateTime  @default(now()) @map("created_at")
+  updatedAt            DateTime  @updatedAt @map("updated_at")
+
+  location             BusinessLocation @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  packageRooms         PackageRoom[]
+  packageAddons        PackageAddon[]
+  timeSlots            PackageTimeSlot[]
+  parties              Party[]
+  couponPackages       CouponPackage[]
+
+  @@map("packages")
+}
+
+model PackageRoom {
+  id         String @id @default(cuid())
+  packageId  String @map("package_id")
+  roomId     String @map("room_id")
+
+  package    Package @relation(fields: [packageId], references: [id], onDelete: Cascade)
+  room       Room    @relation(fields: [roomId], references: [id], onDelete: Cascade)
+
+  @@unique([packageId, roomId])
+  @@map("package_rooms")
+}
+
+model PackageTimeSlot {
+  id         String @id @default(cuid())
+  packageId  String @map("package_id")
+  dayOfWeek  Int    @map("day_of_week")
+  startTime  String @map("start_time") // "10:00"
+  endTime    String @map("end_time")   // "12:00"
+
+  package    Package @relation(fields: [packageId], references: [id], onDelete: Cascade)
+
+  @@map("package_time_slots")
+}
+
+model Addon {
+  id            String   @id @default(cuid())
+  locationId    String   @map("location_id")
+  name          String
+  description   String?
+  price         Decimal  @db.Decimal(10, 2)
+  cost          Decimal? @db.Decimal(10, 2)
+  imageUrl      String?  @map("image_url")
+  isCustom      Boolean  @default(false) @map("is_custom")  // Task #14: custom amounts
+  sortOrder     Int      @default(0) @map("sort_order")
+  isActive      Boolean  @default(true) @map("is_active")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  location      BusinessLocation @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  packageAddons PackageAddon[]
+  partyAddons   PartyAddon[]
+
+  @@map("addons")
+}
+
+model PackageAddon {
+  id        String @id @default(cuid())
+  packageId String @map("package_id")
+  addonId   String @map("addon_id")
+
+  package   Package @relation(fields: [packageId], references: [id], onDelete: Cascade)
+  addon     Addon   @relation(fields: [addonId], references: [id], onDelete: Cascade)
+
+  @@unique([packageId, addonId])
+  @@map("package_addons")
+}
+
+// ============================================================
+// PARTIES (BOOKINGS)
+// ============================================================
+
+model Party {
+  id                String      @id @default(cuid())
+  locationId        String      @map("location_id")
+  packageId         String      @map("package_id")
+  roomId            String?     @map("room_id")
+  status            PartyStatus @default(REQUEST)
+  eventType         EventType   @default(BIRTHDAY) @map("event_type")
+
+  // Host info
+  hostFirstName     String      @map("host_first_name")
+  hostLastName      String      @map("host_last_name")
+  hostEmail         String      @map("host_email")
+  hostPhone         String      @map("host_phone")
+
+  // Event info
+  childName         String?     @map("child_name")
+  childDob          DateTime?   @map("child_dob") @db.Date
+  partyName         String      @map("party_name")
+  partyDate         DateTime    @map("party_date") @db.Date
+  startTime         String      @map("start_time") // "14:00"
+  endTime           String      @map("end_time")   // "16:00"
+  guestCount        Int         @map("guest_count")
+  bannerUrl         String?     @map("banner_url")
+
+  // Pricing (snapshot at booking time)
+  packagePrice      Decimal     @db.Decimal(10, 2) @map("package_price")
+  extraPersonAmount Decimal     @default(0) @db.Decimal(10, 2) @map("extra_person_amount")
+  addonTotal        Decimal     @default(0) @db.Decimal(10, 2) @map("addon_total")
+  subtotal          Decimal     @db.Decimal(10, 2)
+  discountAmount    Decimal     @default(0) @db.Decimal(10, 2) @map("discount_amount")
+  taxRate           Decimal     @default(0) @db.Decimal(5, 4) @map("tax_rate")  // Task #19: percentage-based
+  taxAmount         Decimal     @default(0) @db.Decimal(10, 2) @map("tax_amount")
+  total             Decimal     @db.Decimal(10, 2)
+  amountPaid        Decimal     @default(0) @db.Decimal(10, 2) @map("amount_paid")
+  amountRefunded    Decimal     @default(0) @db.Decimal(10, 2) @map("amount_refunded") // Task #12
+  balance           Decimal     @default(0) @db.Decimal(10, 2)
+
+  // Cancellation (Task #11)
+  cancellationFee       Decimal?  @db.Decimal(10, 2) @map("cancellation_fee")
+  cancellationRefundType RefundType? @map("cancellation_refund_type")
+  cancellationRefundValue Decimal?  @db.Decimal(10, 2) @map("cancellation_refund_value")
+  cancelledAt           DateTime? @map("cancelled_at")
+  cancellationReason    String?   @db.Text @map("cancellation_reason")
+
+  // Metadata
+  invoiceNumber     String?     @unique @map("invoice_number")
+  bookingScreenData Json?       @map("booking_screen_data")
+  createdAt         DateTime    @default(now()) @map("created_at")
+  updatedAt         DateTime    @updatedAt @map("updated_at")
+
+  // Relations
+  location          BusinessLocation @relation(fields: [locationId], references: [id])
+  package           Package          @relation(fields: [packageId], references: [id])
+  room              Room?            @relation(fields: [roomId], references: [id])
+  payments          Payment[]
+  addons            PartyAddon[]
+  invitations       Invitation[]
+  waivers           PartyWaiver[]
+  notes             PartyNote[]
+  assignments       PartyAssignment[]
+  emailLogs         EmailLog[]
+
+  @@index([locationId, partyDate])
+  @@index([status])
+  @@map("parties")
+}
+
+model PartyAddon {
+  id          String   @id @default(cuid())
+  partyId     String   @map("party_id")
+  addonId     String?  @map("addon_id")
+  // Task #14: custom addon support
+  customName  String?  @map("custom_name")
+  customDesc  String?  @map("custom_desc")
+  price       Decimal  @db.Decimal(10, 2)
+  quantity    Int      @default(1)
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  party       Party    @relation(fields: [partyId], references: [id], onDelete: Cascade)
+  addon       Addon?   @relation(fields: [addonId], references: [id])
+
+  @@map("party_addons")
+}
+
+model PartyNote {
+  id        String   @id @default(cuid())
+  partyId   String   @map("party_id")
+  userId    String   @map("user_id")
+  content   String   @db.Text
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  party     Party    @relation(fields: [partyId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id])
+
+  @@map("party_notes")
+}
+
+model PartyAssignment {
+  id        String   @id @default(cuid())
+  partyId   String   @map("party_id")
+  userId    String   @map("user_id")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  party     Party    @relation(fields: [partyId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id])
+
+  @@unique([partyId, userId])
+  @@map("party_assignments")
+}
+
+// ============================================================
+// PAYMENTS & TRANSACTIONS (Tasks #1, #2, #5, #6, #12, #13, #17)
+// ============================================================
+
+model Payment {
+  id                  String        @id @default(cuid())
+  partyId             String        @map("party_id")
+  amount              Decimal       @db.Decimal(10, 2)
+  type                PaymentType
+  status              PaymentStatus @default(PAID)
+  note                String?
+
+  // Task #17: card details for check-in matching
+  cardLast4           String?       @map("card_last4")
+  cardholderName      String?       @map("cardholder_name")
+  cardBrand           String?       @map("card_brand")
+
+  // Gateway references
+  stripePaymentId     String?       @map("stripe_payment_id")
+  squarePaymentId     String?       @map("square_payment_id")
+
+  // Task #12: refund tracking
+  refundedAmount      Decimal?      @db.Decimal(10, 2) @map("refunded_amount")
+  refundedAt          DateTime?     @map("refunded_at")
+  refundReason        String?       @map("refund_reason")
+
+  processedBy         String?       @map("processed_by")
+  processedAt         DateTime      @default(now()) @map("processed_at")
+  createdAt           DateTime      @default(now()) @map("created_at")
+
+  party               Party         @relation(fields: [partyId], references: [id], onDelete: Cascade)
+
+  @@index([partyId])
+  @@index([processedAt])
+  @@index([type])
+  @@index([status])
+  @@map("payments")
+}
+
+// ============================================================
+// INVITATIONS (Tasks #16, #21)
+// ============================================================
+
+model Invitation {
+  id              String           @id @default(cuid())
+  partyId         String           @map("party_id")
+  guestName       String           @map("guest_name")
+  guestEmail      String?          @map("guest_email")
+  guestPhone      String?          @map("guest_phone")  // Task #16: SMS support
+  method          InvitationMethod @default(EMAIL)
+  rsvpStatus      String?          @map("rsvp_status")  // YES, NO, MAYBE, null
+  rsvpAt          DateTime?        @map("rsvp_at")
+  waiverSigned    Boolean          @default(false) @map("waiver_signed") // Task #22
+  sentAt          DateTime?        @map("sent_at")
+  createdAt       DateTime         @default(now()) @map("created_at")
+
+  party           Party            @relation(fields: [partyId], references: [id], onDelete: Cascade)
+
+  @@map("invitations")
+}
+
+// ============================================================
+// WAIVERS (Tasks #22, #23, #24)
+// ============================================================
+
+model WaiverTemplate {
+  id            String   @id @default(cuid())
+  locationId    String   @map("location_id")
+  name          String
+  content       String   @db.LongText // HTML/rich text
+  isDefault     Boolean  @default(false) @map("is_default")
+  isActive      Boolean  @default(true) @map("is_active")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  location      BusinessLocation @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  questions     WaiverQuestion[]
+  partyWaivers  PartyWaiver[]
+
+  @@map("waiver_templates")
+}
+
+model WaiverQuestion {
+  id          String   @id @default(cuid())
+  templateId  String   @map("template_id")
+  question    String
+  type        String   @default("text") // text, select, checkbox
+  options     Json?    // for select/checkbox types
+  isRequired  Boolean  @default(true) @map("is_required")
+  sortOrder   Int      @default(0) @map("sort_order")
+
+  template    WaiverTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+
+  @@map("waiver_questions")
+}
+
+model PartyWaiver {
+  id              String       @id @default(cuid())
+  partyId         String       @map("party_id")
+  templateId      String       @map("template_id")
+  signerName      String       @map("signer_name")
+  signerEmail     String?      @map("signer_email")
+  signerPhone     String?      @map("signer_phone")
+  signatureData   String?      @db.LongText @map("signature_data")
+  answers         Json?
+  status          WaiverStatus @default(PENDING)
+  isHost          Boolean      @default(false) @map("is_host")
+  minors          Json?        // array of minor info objects
+  signedAt        DateTime?    @map("signed_at")
+  createdAt       DateTime     @default(now()) @map("created_at")
+
+  party           Party          @relation(fields: [partyId], references: [id], onDelete: Cascade)
+  template        WaiverTemplate @relation(fields: [templateId], references: [id])
+
+  @@map("party_waivers")
+}
+
+// ============================================================
+// COUPONS & DISCOUNTS
+// ============================================================
+
+model Coupon {
+  id              String     @id @default(cuid())
+  locationId      String     @map("location_id")
+  code            String
+  type            CouponType
+  value           Decimal    @db.Decimal(10, 2)
+  maxUses         Int?       @map("max_uses")
+  usedCount       Int        @default(0) @map("used_count")
+  validFrom       DateTime?  @map("valid_from")
+  validUntil      DateTime?  @map("valid_until")
+  isActive        Boolean    @default(true) @map("is_active")
+  createdAt       DateTime   @default(now()) @map("created_at")
+  updatedAt       DateTime   @updatedAt @map("updated_at")
+
+  location        BusinessLocation @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  couponPackages  CouponPackage[]
+
+  @@unique([locationId, code])
+  @@map("coupons")
+}
+
+model CouponPackage {
+  id        String @id @default(cuid())
+  couponId  String @map("coupon_id")
+  packageId String @map("package_id")
+
+  coupon    Coupon  @relation(fields: [couponId], references: [id], onDelete: Cascade)
+  package   Package @relation(fields: [packageId], references: [id], onDelete: Cascade)
+
+  @@unique([couponId, packageId])
+  @@map("coupon_packages")
+}
+
+// ============================================================
+// TAXES
+// ============================================================
+
+model Tax {
+  id          String   @id @default(cuid())
+  locationId  String   @map("location_id")
+  name        String
+  rate        Decimal  @db.Decimal(5, 4) // 0.0600 = 6%
+  isDefault   Boolean  @default(false) @map("is_default")
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  location    BusinessLocation @relation(fields: [locationId], references: [id], onDelete: Cascade)
+
+  @@map("taxes")
+}
+
+// ============================================================
+// PARTY TYPES
+// ============================================================
+
+model PartyType {
+  id          String   @id @default(cuid())
+  locationId  String   @map("location_id")
+  name        String
+  description String?
+  imageUrl    String?  @map("image_url")
+  sortOrder   Int      @default(0) @map("sort_order")
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  location    BusinessLocation @relation(fields: [locationId], references: [id], onDelete: Cascade)
+
+  @@map("party_types")
+}
+
+// ============================================================
+// EMAIL TEMPLATES & LOGS (Tasks #14, #15, #16, #20, #21)
+// ============================================================
+
+model EmailTemplate {
+  id          String   @id @default(cuid())
+  locationId  String   @map("location_id")
+  name        String
+  subject     String
+  body        String   @db.LongText
+  trigger     String?  // e.g. "booking_confirmed", "balance_settled", "cancellation"
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  location    BusinessLocation @relation(fields: [locationId], references: [id], onDelete: Cascade)
+
+  @@map("email_templates")
+}
+
+model EmailLog {
+  id          String   @id @default(cuid())
+  partyId     String?  @map("party_id")
+  recipient   String
+  subject     String
+  body        String   @db.Text
+  status      String   @default("sent") // sent, failed, bounced
+  sentAt      DateTime @default(now()) @map("sent_at")
+
+  party       Party?   @relation(fields: [partyId], references: [id])
+
+  @@index([partyId])
+  @@map("email_logs")
+}
+
+// ============================================================
+// MISC
+// ============================================================
+
+model NotificationEmail {
+  id          String   @id @default(cuid())
+  locationId  String   @map("location_id")
+  email       String
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  location    BusinessLocation @relation(fields: [locationId], references: [id], onDelete: Cascade)
+
+  @@map("notification_emails")
+}
+
+model SocialLink {
+  id          String   @id @default(cuid())
+  locationId  String   @map("location_id")
+  platform    String
+  url         String
+
+  location    BusinessLocation @relation(fields: [locationId], references: [id], onDelete: Cascade)
+
+  @@map("social_links")
+}
+
+model GalleryImage {
+  id          String   @id @default(cuid())
+  locationId  String   @map("location_id")
+  imageUrl    String   @map("image_url")
+  caption     String?
+  sortOrder   Int      @default(0) @map("sort_order")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  location    BusinessLocation @relation(fields: [locationId], references: [id], onDelete: Cascade)
+
+  @@map("gallery_images")
+}
+
+model BlockedTime {
+  id          String   @id @default(cuid())
+  locationId  String   @map("location_id")
+  roomId      String?  @map("room_id")
+  date        DateTime @db.Date
+  startTime   String   @map("start_time")
+  endTime     String   @map("end_time")
+  reason      String?
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@index([locationId, date])
+  @@map("blocked_times")
+}
